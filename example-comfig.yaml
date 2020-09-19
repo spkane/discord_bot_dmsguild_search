@@ -1,0 +1,9 @@
+# Copy this file to config.yaml and edit as required.
+discord:
+  token: "REPLACE_THIS"
+  channel: "REPLACE_THIS"
+dmsguild:
+  affiliate: "563484"
+  keywords: "fantasy%20grounds"
+settings:
+  minutes: "15"
