@@ -65,7 +65,7 @@ func SetupSignalHandler() {
 	signal.Notify(c, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	go func() {
 		<-c
-		fmt.Println("\n[WARN] Received signal. Exiting...")
+		fmt.Println("\n[" + time.Now().String() + "] [WARN] Received signal. Exiting...")
 		os.Exit(99)
 	}()
 }
@@ -87,7 +87,7 @@ func ProcessArgs(cfg interface{}) Args {
 
 	err := f.Parse(os.Args[1:])
 	if err != nil {
-		fmt.Println("[ERROR] could not parse CLI arguments: ", err)
+		fmt.Println("["+time.Now().String()+"] [ERROR] could not parse CLI arguments: ", err)
 		os.Exit(2)
 	}
 	return a
@@ -116,12 +116,28 @@ func disableURL(s string) string {
 	return strings.TrimSpace(final)
 }
 
+// priceClean is used to fixup the price entry a bit
+func priceClean(s string) string {
+	price := ""
+	fields := strings.Fields(strings.TrimSpace(s))
+	for i, v := range fields {
+		if i == 0 {
+			price = "Normal Price: " + v
+		} else if i == 1 {
+			price = price + "\n**Sales  Price**: " + v
+		} else {
+			fmt.Println("[" + time.Now().String() + "] [WARN] Found more product price lines then expected.")
+		}
+	}
+	return strings.TrimSpace(price)
+}
+
 // updateMessage is the workhorse and should be split into many smaller functions
 // This does all the work of pulling the search results, parsing and then posting them.
 func updateMessage(discord *discordgo.Session) error {
 	resp, err := soup.Get("https://www.dmsguild.com/browse.php?keywords=" + cfg.Dmsguild.Keywords + "&page=1&sort=4a")
 	if err != nil {
-		fmt.Println("[ERROR] could perform DMs Guild search: ", err)
+		fmt.Println("["+time.Now().String()+"] [ERROR] could perform DMs Guild search: ", err)
 		return err
 	}
 	doc := soup.HTMLParse(resp)
@@ -213,10 +229,16 @@ func updateMessage(discord *discordgo.Session) error {
 				}
 			} else {
 				line := strings.TrimSpace(s)
-				if strings.HasPrefix(line, "$") || line == "FREE" {
-					price = line
-					if strings.Contains(price, " $") {
-						price = price + " (**ON SALE**)"
+				if strings.HasPrefix(line, "$") || line == "FREE" || line == "Pay What You Want" {
+					match, err := regexp.Match(`\d+\s+\$`, []byte(line))
+					if err != nil {
+						fmt.Println("["+time.Now().String()+"] [ERROR] could not match price pattern: ", err)
+						match = false
+					}
+					if match {
+						price = priceClean(price)
+					} else {
+						price = "**Price**: " + line
 					}
 					continue
 				}
@@ -229,7 +251,7 @@ func updateMessage(discord *discordgo.Session) error {
 			continue
 		}
 		message = message + "[*click the link below for more information*]\n"
-		message = message + "**Price**: " + price + "\n"
+		message = message + price + "\n"
 
 		message = message + "**Link**: " + link + "?affiliate_id=" + cfg.Dmsguild.Affiliate
 		//fmt.Println(message)
@@ -237,7 +259,7 @@ func updateMessage(discord *discordgo.Session) error {
 		if !strings.Contains(link, "browse.php") {
 			_, err = discord.ChannelMessageSend(cfg.Discord.Channel, message)
 			if err != nil {
-				fmt.Println("[ERROR] could not send Discord message: ", err)
+				fmt.Println("["+time.Now().String()+"] [ERROR] could not send Discord message: ", err)
 				return err
 			}
 		}
@@ -253,26 +275,33 @@ func main() {
 
 	// read configuration from the file and environment variables
 	if err := cleanenv.ReadConfig(args.ConfigPath, &cfg); err != nil {
-		fmt.Println("[ERROR] Reading configuration: ", err)
+		fmt.Println("["+time.Now().String()+"] [ERROR] Reading configuration: ", err)
 		os.Exit(2)
 	}
 
+	fmt.Printf("\n[" + time.Now().String() + "] Initilizing application...\n\n")
+	fmt.Println("Keywords for search   : ", cfg.Dmsguild.Keywords)
+	fmt.Println("Title filter (if any) : ", cfg.Dmsguild.TitleFilter)
+	fmt.Println("Affiliate code        : ", cfg.Dmsguild.Affiliate)
+	fmt.Println("Minutes between checks: ", cfg.Settings.Minutes)
+	fmt.Printf("\n")
+
 	discord, err := discordgo.New("Bot " + cfg.Discord.Token)
 	if err != nil {
-		fmt.Println("[ERROR] could not create Discord session: ", err)
+		fmt.Println("["+time.Now().String()+"] [ERROR] could not create Discord session: ", err)
 		os.Exit(1)
 	}
 
 	min, err := strconv.ParseInt(cfg.Settings.Minutes, 10, 64)
 	if err != nil {
-		fmt.Println("[ERROR] could not convert minute argument to integer: ", err)
+		fmt.Println("["+time.Now().String()+"] [ERROR] could not convert minute argument to integer: ", err)
 		os.Exit(1)
 	}
 
 	//Run the first time, before the time starts
 	err = updateMessage(discord)
 	if err != nil {
-		fmt.Println("[ERROR] could not perform initial check: ", err)
+		fmt.Println("["+time.Now().String()+"] [ERROR] could not perform initial check: ", err)
 		os.Exit(1)
 	}
 
@@ -281,7 +310,7 @@ func main() {
 
 	err = gocron.Every(uint64(min)).Minute().Do(updateMessage, discord)
 	if err != nil {
-		fmt.Println("[ERROR] could not schedule search: ", err)
+		fmt.Println("["+time.Now().String()+"] [ERROR] could not schedule search: ", err)
 		os.Exit(1)
 	}
 	<-gocron.Start()

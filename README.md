@@ -17,3 +17,5 @@
 
 * Fix the bug that allows browse.php link to sneak through sometimes.
 * Break out the main function into smaller functions
+* handle [BUNDLE]
+* check or handle missing links?
