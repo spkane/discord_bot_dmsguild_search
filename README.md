@@ -6,16 +6,22 @@
   * Add your Discord token and the channel ID where you want the bot to post.
   * Edit the rest as desired.
 * Run `discord_bot_dmsguild_search`
+  * or `discord_bot_dmsguild_search.exe`
 * It will post matching releases for the current day as they are posted.
   * When it is first run, it will post any earlier posts from the same day.
 
 ## Building
 
-* go `build`
+* `CGO_ENABLED=0 go build`
+  * or for Windows:
+    * `set CGO_ENABLED=0`
+    * `go build`
+
+### Build for Multi-Platforms
+
+* `go get github.com/mitchellh/gox`
+* `gox`
 
 ## To Do
 
-* Fix the bug that allows browse.php link to sneak through sometimes.
-* Break out the main function into smaller functions
-* handle [BUNDLE]
-* check or handle missing links?
+* FIXME notes in code...

@@ -1,0 +1,33 @@
+# github.com/BurntSushi/toml v0.3.1
+github.com/BurntSushi/toml
+# github.com/anaskhan96/soup v1.1.2-0.20200220101040-0abf2cdad74b
+## explicit
+github.com/anaskhan96/soup
+# github.com/bwmarrin/discordgo v0.22.0
+## explicit
+github.com/bwmarrin/discordgo
+# github.com/gorilla/websocket v1.4.0
+github.com/gorilla/websocket
+# github.com/ilyakaznacheev/cleanenv v1.2.5
+## explicit
+github.com/ilyakaznacheev/cleanenv
+# github.com/jasonlvhit/gocron v0.0.1
+## explicit
+github.com/jasonlvhit/gocron
+# github.com/joho/godotenv v1.3.0
+github.com/joho/godotenv
+# golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2
+golang.org/x/crypto/internal/subtle
+golang.org/x/crypto/nacl/secretbox
+golang.org/x/crypto/poly1305
+golang.org/x/crypto/salsa20/salsa
+# golang.org/x/net v0.0.0-20200226121028-0de0cce0169b
+golang.org/x/net/html
+golang.org/x/net/html/atom
+# golang.org/x/sys v0.0.0-20190412213103-97732733099d
+golang.org/x/sys/cpu
+golang.org/x/sys/unix
+# gopkg.in/yaml.v2 v2.2.2
+gopkg.in/yaml.v2
+# olympos.io/encoding/edn v0.0.0-20200308123125-93e3b8dd0e24
+olympos.io/encoding/edn

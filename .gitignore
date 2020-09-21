@@ -2,3 +2,4 @@ config*.yaml
 *.log
 discord_bot_dmsguild_search
 discord_bot_dmsguild_search.exe
+discord_bot_dmsguild_search_*

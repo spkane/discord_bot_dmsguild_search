@@ -42,8 +42,8 @@ type Args struct {
 }
 
 // global variables
+var discord *discordgo.Session
 var cfg Config
-var lastTitle string
 var memoryDate string
 var memoryTitles []string
 
@@ -132,138 +132,203 @@ func priceClean(s string) string {
 	return strings.TrimSpace(price)
 }
 
-// updateMessage is the workhorse and should be split into many smaller functions
-// This does all the work of pulling the search results, parsing and then posting them.
-func updateMessage(discord *discordgo.Session) error {
+// searchRows does the initial search and returns the rows we care about
+func searchRows() ([]soup.Root, error) {
 	resp, err := soup.Get("https://www.dmsguild.com/browse.php?keywords=" + cfg.Dmsguild.Keywords + "&page=1&sort=4a")
 	if err != nil {
 		fmt.Println("["+time.Now().String()+"] [ERROR] could perform DMs Guild search: ", err)
-		return err
+		return nil, err
 	}
 	doc := soup.HTMLParse(resp)
-	rows := doc.Find("table", "class", "productListing").FindAll("tr")
-	for _, row := range rows {
-		message := ""
-		link := ""
-		price := ""
-		//fmt.Printf("%#v", row)
-		desc := row.FullText()
-		links := row.FindAll("a")
-		link = links[0].Attrs()["href"]
+	return doc.Find("table", "class", "productListing").FindAll("tr"), nil
+}
 
-		// Split the string into lines.
-		parts := strings.Split(desc, "\n")
-		// Iterate over the lines.
-		firstLine := false
-		for _, s := range parts {
-			if strings.TrimSpace(s) == "" {
+// handleTitleLine tries to untagle the title and release date
+// and then sets up the message template
+// FIXME: Could still use some refactoring.
+func handleTitleLine(data map[string]string, s string) (map[string]string, error) {
+	data["firstLine"] = "true"
+	d := regexp.MustCompile(` *Date Added: .*$*`)
+	title := d.Split(strings.TrimSpace(s), -1)
+	// Filter the titles.
+	// Useful for "Fantasy Grounds" amoung others.
+	if (cfg.Dmsguild.TitleFilter == "") || (cfg.Dmsguild.TitleFilter != "" && strings.Contains(title[0], cfg.Dmsguild.TitleFilter)) {
+		date := strings.Fields(strings.TrimSpace(s))
+		finalDate := ""
+		endText := ""
+		foundDate := "false"
+		data["sendMessage"] = "true"
+		// DMs Guild HTML code is inconsistent at best.
+		// Try to pull out what we want and clean it up a bit.
+		for i, v := range date {
+			if foundDate == "true" {
+				foundDate = "done"
 				continue
-			} else if !firstLine {
-				firstLine = true
-				d := regexp.MustCompile(` *Date Added: .*$*`)
-				title := d.Split(strings.TrimSpace(s), -1)
-				// Filter the titles.
-				// Useful for "Fantasy Grounds" amoung others.
-				if (cfg.Dmsguild.TitleFilter == "") || (cfg.Dmsguild.TitleFilter != "" && strings.Contains(title[0], cfg.Dmsguild.TitleFilter)) {
-					date := strings.Fields(strings.TrimSpace(s))
-					finalDate := ""
-					endText := ""
-					foundDate := "false"
-					sendMessage := true
-					// DMs Guild HTML code is inconsistent at best.
-					// Try to pull out what we want and clean it up a bit.
-					for i, v := range date {
-						if foundDate == "true" {
-							foundDate = "done"
-							continue
-						}
-						if foundDate == "false" {
-							if v == "Added:" {
-								workDate := date[i+1]
-								finalDate = workDate[0:10]
-								// Only print today's releases
-								currentTime := time.Now()
-								if memoryDate != currentTime.Format("2006-01-02") {
-									//if memoryDate != "2020-09-17" {
-									memoryTitles = make([]string, 0)
-									//memoryDate = "2020-09-17"
-									memoryDate = currentTime.Format("2006-01-02")
-								}
-								if finalDate != memoryDate {
-									sendMessage = false
-								}
-								if len(workDate) > 10 {
-									endText = workDate[10:] + " "
-								}
-								foundDate = "true"
-							}
-						} else {
-							endText = endText + v + " "
-						}
+			}
+			if foundDate == "false" {
+				if v == "Added:" {
+					workDate := date[i+1]
+					finalDate = workDate[0:10]
+					// Only print today's releases
+					currentTime := time.Now()
+					if memoryDate != currentTime.Format("2006-01-02") {
+						//if memoryDate != "2020-09-17" {
+						memoryTitles = make([]string, 0)
+						//memoryDate = "2020-09-17"
+						memoryDate = currentTime.Format("2006-01-02")
 					}
-					foundTitle := false
-					for _, v := range memoryTitles {
-						if v == title[0] {
-							foundTitle = true
-							sendMessage = false
-							break
-						}
+					if finalDate != memoryDate {
+						data["sendMessage"] = "false"
 					}
-					if !foundTitle {
-						memoryTitles = append(memoryTitles, title[0])
+					if len(workDate) > 10 {
+						endText = workDate[10:] + " "
 					}
-					if !sendMessage {
-						break
-					}
-					if title[0] == lastTitle {
-						break
-					}
-					message = "**__" + title[0] + "__**\n"
-					message = message + "**Date Added**: " + finalDate + "\n"
-					message = message + "**Description**:\n"
-					if endText != "" {
-						message = message + removeClick(endText) + "\n"
-					}
-				} else {
-					break
+					foundDate = "true"
 				}
 			} else {
-				line := strings.TrimSpace(s)
-				if strings.HasPrefix(line, "$") || line == "FREE" || line == "Pay What You Want" {
-					match, err := regexp.Match(`\d+\s+\$`, []byte(line))
-					if err != nil {
-						fmt.Println("["+time.Now().String()+"] [ERROR] could not match price pattern: ", err)
-						match = false
-					}
-					if match {
-						price = priceClean(price)
-					} else {
-						price = "**Price**: " + line
-					}
-					continue
-				}
-				if line != "Dungeon Masters Guild" {
-					message = message + removeClick(s) + "\n"
-				}
+				endText = endText + v + " "
 			}
 		}
-		if message == "" {
-			continue
+		foundTitle := false
+		for _, v := range memoryTitles {
+			if v == title[0] {
+				foundTitle = true
+				data["sendMessage"] = "false"
+				break
+			}
 		}
-		message = message + "[*click the link below for more information*]\n"
-		message = message + price + "\n"
+		if !foundTitle {
+			memoryTitles = append(memoryTitles, title[0])
+		}
+		if data["sendMessage"] == "false" {
+			return data, nil
+		}
+		data["message"] = "**__" + title[0] + "__**\n"
+		data["message"] = data["message"] + "**Date Added**: " + finalDate + "\n"
+		data["message"] = data["message"] + "**Description**:\n"
+		if endText != "" {
+			data["message"] = data["message"] + removeClick(endText) + "\n"
+		}
+	} else {
+		return data, nil
+	}
+	return data, nil
+}
 
-		message = message + "**Link**: " + link + "?affiliate_id=" + cfg.Dmsguild.Affiliate
-		//fmt.Println(message)
-		// FIXME: We should not need to check this, but there is a bug that is allowing this to slip through sometimes.
-		if !strings.Contains(link, "browse.php") {
-			_, err = discord.ChannelMessageSend(cfg.Discord.Channel, message)
+// handlePrice tries to return a cleaned up price line for the message.
+func handlePrice(data map[string]string, line string) map[string]string {
+	match, err := regexp.Match(`\d+\s+\$`, []byte(line))
+	if err != nil {
+		fmt.Println("["+time.Now().String()+"] [ERROR] could not match price pattern: ", err)
+		match = false
+	}
+	if match {
+		data["price"] = priceClean(line)
+	} else {
+		data["price"] = "**Price**: " + line
+	}
+	return data
+}
+
+// processLines iterates through all the lines for a product
+// to try and build a message from the data.
+func processLines(parts []string) (map[string]string, error) {
+	var err error
+	data := make(map[string]string)
+	data["message"] = ""
+	data["firstLine"] = "false"
+	data["price"] = ""
+	for _, s := range parts {
+		if strings.TrimSpace(s) == "" {
+			continue
+		} else if data["firstLine"] == "false" {
+			data, err = handleTitleLine(data, s)
 			if err != nil {
-				fmt.Println("["+time.Now().String()+"] [ERROR] could not send Discord message: ", err)
-				return err
+				return nil, err
+			}
+			if data["sendMessage"] == "false" {
+				break
+			}
+		} else {
+			line := strings.TrimSpace(s)
+			if strings.HasPrefix(line, "$") || line == "FREE" || line == "Pay What You Want" {
+				data = handlePrice(data, line)
+				continue
+			}
+			if line != "Dungeon Masters Guild" {
+				data["message"] = data["message"] + removeClick(s) + "\n"
 			}
 		}
 	}
+	return data, nil
+}
+
+// processRows takes the rows we care about and start to iterate over them.
+// This function manages the message creation and sending.
+func processRows(rows []soup.Root) error {
+	// process the rows
+	for _, row := range rows {
+
+		//Grab full text
+		desc := row.FullText()
+
+		// Split the full text into lines.
+		parts := strings.Split(desc, "\n")
+
+		// Iterate over the lines.
+		data, err := processLines(parts)
+		if err != nil {
+			return err
+		}
+
+		if data["message"] == "" {
+			continue
+		}
+
+		// Grab link
+		links := row.FindAll("a")
+		data["link"] = links[0].Attrs()["href"]
+
+		// Assemble & send final message
+		err = sendMessage(data)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sendMessage finalizes the message and sends it to Discord.
+func sendMessage(data map[string]string) error {
+	data["message"] = data["message"] + "[*click the link below for more information*]\n"
+	data["message"] = data["message"] + data["price"] + "\n"
+
+	data["message"] = data["message"] + "**Link**: " + data["link"] + "?affiliate_id=" + cfg.Dmsguild.Affiliate
+	//fmt.Println(data["message"])
+	// FIXME: We should not need to check this, but there is a bug that is allowing this to slip through sometimes.
+	if !strings.Contains(data["link"], "browse.php") {
+		_, err := discord.ChannelMessageSend(cfg.Discord.Channel, data["message"])
+		if err != nil {
+			fmt.Println("["+time.Now().String()+"] [ERROR] could not send Discord message: ", err)
+			return err
+		}
+	}
+	return nil
+}
+
+// updateMessage coordinates all the work of pulling in the search results,
+// parsing and then posting them.
+func updateMessage(discord *discordgo.Session) error {
+	rows, err := searchRows()
+	if err != nil {
+		return err
+	}
+
+	err = processRows(rows)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -271,10 +336,11 @@ func updateMessage(discord *discordgo.Session) error {
 // Read the config, setup the discord client, run the intial check,
 // and then finally setup the ongoinging scheduled checks.
 func main() {
+	var err error
 	args := ProcessArgs(&cfg)
 
 	// read configuration from the file and environment variables
-	if err := cleanenv.ReadConfig(args.ConfigPath, &cfg); err != nil {
+	if err = cleanenv.ReadConfig(args.ConfigPath, &cfg); err != nil {
 		fmt.Println("["+time.Now().String()+"] [ERROR] Reading configuration: ", err)
 		os.Exit(2)
 	}
@@ -286,7 +352,7 @@ func main() {
 	fmt.Println("Minutes between checks: ", cfg.Settings.Minutes)
 	fmt.Printf("\n")
 
-	discord, err := discordgo.New("Bot " + cfg.Discord.Token)
+	discord, err = discordgo.New("Bot " + cfg.Discord.Token)
 	if err != nil {
 		fmt.Println("["+time.Now().String()+"] [ERROR] could not create Discord session: ", err)
 		os.Exit(1)
