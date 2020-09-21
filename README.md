@@ -20,7 +20,7 @@
 ### Build for Multi-Platforms
 
 * `go get github.com/mitchellh/gox`
-* `gox`
+* `gox -osarch="windows/amd64 linux/amd64 darwin/amd64"`
 
 ## To Do
 
