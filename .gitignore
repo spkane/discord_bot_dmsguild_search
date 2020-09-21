@@ -1,3 +1,4 @@
-config.yaml
-discord-dmsguild-search
-
+config*.yaml
+*.log
+discord_bot_dmsguild_search
+discord_bot_dmsguild_search.exe

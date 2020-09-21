@@ -18,14 +18,18 @@ import (
 	"github.com/jasonlvhit/gocron"
 )
 
+// Config is the type definition for the YAML configuration
+// If you set env-default to something then the cleanenv library doesn't let you
+// set the value to empty string in the config :(
 type Config struct {
 	Discord struct {
 		Token   string `yaml:"token" env:"DISCORD_TOKEN"`
 		Channel string `yaml:"channel" env:"DISCORD_CHANNEL_ID"`
 	} `yaml:"discord"`
 	Dmsguild struct {
-		Affiliate string `yaml:"affiliate" env:"DMG_AFFILIATE_ID" env-default:"563484"`
-		Keywords  string `yaml:"keywords" env:"DMG_SEARCH_KEYWORDS" env-default:"fantasy%20grounds"`
+		Affiliate   string `yaml:"affiliate" env:"DMG_AFFILIATE_ID" env-default:"563484"`
+		Keywords    string `yaml:"keywords" env:"DMG_SEARCH_KEYWORDS" env-default:"fantasy%20grounds"`
+		TitleFilter string `yaml:"title_filter" env:"DMG_TITLE_FILTER"`
 	} `yaml:"dmsguild"`
 	Settings struct {
 		Minutes string `yaml:"minutes" env:"CHECK_MINUTES" env-default:"15"`
@@ -43,7 +47,12 @@ var lastTitle string
 var memoryDate string
 var memoryTitles []string
 
+// init Initializes a few paramaters and sets up signal handling
 func init() {
+	currentTime := time.Now()
+	memoryDate = currentTime.Format("2006-01-02")
+	memoryTitles = make([]string, 0)
+
 	// Setup our Signal handler
 	SetupSignalHandler()
 }
@@ -53,7 +62,7 @@ func init() {
 // our clean up procedure and exiting the program.
 func SetupSignalHandler() {
 	c := make(chan os.Signal)
-	signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	signal.Notify(c, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	go func() {
 		<-c
 		fmt.Println("\n[WARN] Received signal. Exiting...")
@@ -79,10 +88,12 @@ func ProcessArgs(cfg interface{}) Args {
 	err := f.Parse(os.Args[1:])
 	if err != nil {
 		fmt.Println("[ERROR] could not parse CLI arguments: ", err)
+		os.Exit(2)
 	}
 	return a
 }
 
+// removeClick removes the [click here for more...] text, if it exists
 func removeClick(s string) string {
 	fields := strings.Fields(strings.TrimSpace(s))
 	workLine := ""
@@ -93,13 +104,25 @@ func removeClick(s string) string {
 			workLine = workLine + v + " "
 		}
 	}
-	return strings.TrimSpace(workLine)
+	final := disableURL(workLine)
+	return strings.TrimSpace(final)
 }
 
-func updateMessage(discord *discordgo.Session) {
+// disableURL removes http:// and https:// from the descriptions
+// to disable additional URL unfurling in Discord
+func disableURL(s string) string {
+	workLine := strings.Replace(s, "https://", "", -1)
+	final := strings.Replace(workLine, "http://", "", -1)
+	return strings.TrimSpace(final)
+}
+
+// updateMessage is the workhorse and should be split into many smaller functions
+// This does all the work of pulling the search results, parsing and then posting them.
+func updateMessage(discord *discordgo.Session) error {
 	resp, err := soup.Get("https://www.dmsguild.com/browse.php?keywords=" + cfg.Dmsguild.Keywords + "&page=1&sort=4a")
 	if err != nil {
 		fmt.Println("[ERROR] could perform DMs Guild search: ", err)
+		return err
 	}
 	doc := soup.HTMLParse(resp)
 	rows := doc.Find("table", "class", "productListing").FindAll("tr")
@@ -107,6 +130,7 @@ func updateMessage(discord *discordgo.Session) {
 		message := ""
 		link := ""
 		price := ""
+		//fmt.Printf("%#v", row)
 		desc := row.FullText()
 		links := row.FindAll("a")
 		link = links[0].Attrs()["href"]
@@ -118,13 +142,13 @@ func updateMessage(discord *discordgo.Session) {
 		for _, s := range parts {
 			if strings.TrimSpace(s) == "" {
 				continue
-			} else if firstLine == false {
+			} else if !firstLine {
 				firstLine = true
 				d := regexp.MustCompile(` *Date Added: .*$*`)
 				title := d.Split(strings.TrimSpace(s), -1)
-				// Try to filter to things made for Fantasy Grounds
-				// versus things that mention Fantasy Grounds
-				if strings.Contains(title[0], "Fantasy Grounds") {
+				// Filter the titles.
+				// Useful for "Fantasy Grounds" amoung others.
+				if (cfg.Dmsguild.TitleFilter == "") || (cfg.Dmsguild.TitleFilter != "" && strings.Contains(title[0], cfg.Dmsguild.TitleFilter)) {
 					date := strings.Fields(strings.TrimSpace(s))
 					finalDate := ""
 					endText := ""
@@ -169,7 +193,7 @@ func updateMessage(discord *discordgo.Session) {
 							break
 						}
 					}
-					if foundTitle == false {
+					if !foundTitle {
 						memoryTitles = append(memoryTitles, title[0])
 					}
 					if !sendMessage {
@@ -189,7 +213,7 @@ func updateMessage(discord *discordgo.Session) {
 				}
 			} else {
 				line := strings.TrimSpace(s)
-				if strings.HasPrefix(line, "$") {
+				if strings.HasPrefix(line, "$") || line == "FREE" {
 					price = line
 					if strings.Contains(price, " $") {
 						price = price + " (**ON SALE**)"
@@ -208,21 +232,28 @@ func updateMessage(discord *discordgo.Session) {
 		message = message + "**Price**: " + price + "\n"
 
 		message = message + "**Link**: " + link + "?affiliate_id=" + cfg.Dmsguild.Affiliate
-		fmt.Println(memoryTitles)
 		//fmt.Println(message)
-		_, err = discord.ChannelMessageSend(cfg.Discord.Channel, message)
-		if err != nil {
-			fmt.Println("[ERROR] could not send Discord message: ", err)
+		// FIXME: We should not need to check this, but there is a bug that is allowing this to slip through sometimes.
+		if !strings.Contains(link, "browse.php") {
+			_, err = discord.ChannelMessageSend(cfg.Discord.Channel, message)
+			if err != nil {
+				fmt.Println("[ERROR] could not send Discord message: ", err)
+				return err
+			}
 		}
 	}
+	return nil
 }
 
+// main is where everything starts.
+// Read the config, setup the discord client, run the intial check,
+// and then finally setup the ongoinging scheduled checks.
 func main() {
 	args := ProcessArgs(&cfg)
 
 	// read configuration from the file and environment variables
 	if err := cleanenv.ReadConfig(args.ConfigPath, &cfg); err != nil {
-		fmt.Println(err)
+		fmt.Println("[ERROR] Reading configuration: ", err)
 		os.Exit(2)
 	}
 
@@ -235,6 +266,13 @@ func main() {
 	min, err := strconv.ParseInt(cfg.Settings.Minutes, 10, 64)
 	if err != nil {
 		fmt.Println("[ERROR] could not convert minute argument to integer: ", err)
+		os.Exit(1)
+	}
+
+	//Run the first time, before the time starts
+	err = updateMessage(discord)
+	if err != nil {
+		fmt.Println("[ERROR] could not perform initial check: ", err)
 		os.Exit(1)
 	}
 

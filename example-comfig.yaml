@@ -4,6 +4,8 @@ discord:
   channel: "REPLACE_THIS"
 dmsguild:
   affiliate: "563484"
+  # URL Safe String 
   keywords: "fantasy%20grounds"
+  title_filter: "Fantasy Grounds"
 settings:
   minutes: "15"
