@@ -1,5 +1,7 @@
 # DMs Guild Search - Discord Bot
 
+![An example of a new DMs Guild release being posted into a Discord channel](./images/example-bot-post.png)
+
 ## Running
 
 * Copy `example-config.yaml` to `config.yaml`
